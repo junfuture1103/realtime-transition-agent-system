@@ -1,0 +1,253 @@
+{
+  "schema_id": "kaggle_fraud_transactions_v1",
+  "display_name": "Kaggle fraud transactions schema",
+  "description": "Default training schema based on Kaggle fraud transaction datasets with timestamp, cardholder, merchant, location, amount, and is_fraud target columns.",
+  "source": {
+    "name": "Kaggle fraud transactions dataset",
+    "url": "https://www.kaggle.com/datasets/dermisfit/fraud-transactions-dataset",
+    "notes": "Selected because the columns are interpretable for security education: time, amount, merchant category, cardholder profile, geo distance, and binary fraud labels."
+  },
+  "target": "is_fraud",
+  "allow_unknown_features": false,
+  "display": {
+    "amount_field": "amt",
+    "account_field": "cc_num",
+    "category_field": "category",
+    "channel_field": "merchant",
+    "country_field": "state"
+  },
+  "decision": {
+    "review_threshold": 0.55,
+    "block_threshold": 0.8
+  },
+  "retrain": {
+    "min_samples": 80,
+    "supervised_min_labeled": 60,
+    "max_recent_samples": 8000,
+    "retrain_every": 16,
+    "allow_high_confidence_pseudo_labels": true,
+    "pseudo_label_min_confidence": 0.95,
+    "isolation_contamination": 0.04
+  },
+  "derived_features": [
+    {
+      "name": "customer_merchant_distance_km",
+      "type": "geo_distance",
+      "lat": "lat",
+      "long": "long",
+      "other_lat": "merch_lat",
+      "other_long": "merch_long"
+    },
+    {
+      "name": "balance_delta",
+      "type": "difference",
+      "left": "old_balance",
+      "right": "new_balance"
+    }
+  ],
+  "fields": [
+    {
+      "name": "trans_date_trans_time",
+      "type": "datetime",
+      "role": "feature",
+      "required": true,
+      "default": "2020-06-21 12:14:25",
+      "derive": ["hour", "day_of_week", "month", "is_weekend"],
+      "include_raw": false,
+      "description": "Transaction timestamp."
+    },
+    {
+      "name": "cc_num",
+      "type": "text",
+      "role": "entity",
+      "train": false,
+      "required": true,
+      "default": "4767265376804500",
+      "description": "Anonymized credit card/account identifier."
+    },
+    {
+      "name": "merchant",
+      "type": "categorical",
+      "role": "entity",
+      "train": false,
+      "required": true,
+      "default": "fraud_Kilback LLC",
+      "allowed": ["fraud_Kilback LLC", "fraud_Rau and Sons", "fraud_Berge LLC", "fraud_Hackett Group", "fraud_Bahringer Group", "fraud_Goyette Inc"],
+      "description": "Merchant identifier; kept out of baseline training to avoid high-cardinality shortcut learning."
+    },
+    {
+      "name": "category",
+      "type": "categorical",
+      "role": "feature",
+      "required": true,
+      "default": "grocery_pos",
+      "allowed": ["grocery_pos", "gas_transport", "shopping_net", "shopping_pos", "misc_net", "misc_pos", "entertainment", "food_dining", "health_fitness", "home", "kids_pets", "personal_care", "travel"],
+      "description": "Merchant category."
+    },
+    {
+      "name": "amt",
+      "type": "number",
+      "role": "feature",
+      "required": true,
+      "default": 86.43,
+      "min": 0,
+      "max": 50000,
+      "description": "Transaction amount."
+    },
+    {
+      "name": "gender",
+      "type": "categorical",
+      "role": "feature",
+      "required": true,
+      "default": "F",
+      "allowed": ["F", "M"],
+      "description": "Cardholder gender as represented in the Kaggle dataset."
+    },
+    {
+      "name": "city",
+      "type": "categorical",
+      "role": "feature",
+      "required": true,
+      "default": "Birmingham",
+      "allowed": ["Birmingham", "Phoenix", "Dallas", "Seattle", "Denver", "Miami", "Portland", "Columbus", "Austin", "San Jose"],
+      "description": "Cardholder city."
+    },
+    {
+      "name": "state",
+      "type": "categorical",
+      "role": "feature",
+      "required": true,
+      "default": "AL",
+      "allowed": ["AL", "AZ", "CA", "CO", "FL", "GA", "OH", "OR", "TX", "WA"],
+      "description": "Cardholder state."
+    },
+    {
+      "name": "zip",
+      "type": "integer",
+      "role": "feature",
+      "required": true,
+      "default": 35203,
+      "min": 10000,
+      "max": 99999,
+      "description": "Cardholder ZIP code."
+    },
+    {
+      "name": "lat",
+      "type": "number",
+      "role": "feature",
+      "required": true,
+      "default": 33.5207,
+      "min": -90,
+      "max": 90,
+      "description": "Cardholder latitude."
+    },
+    {
+      "name": "long",
+      "type": "number",
+      "role": "feature",
+      "required": true,
+      "default": -86.8025,
+      "min": -180,
+      "max": 180,
+      "description": "Cardholder longitude."
+    },
+    {
+      "name": "city_pop",
+      "type": "integer",
+      "role": "feature",
+      "required": true,
+      "default": 212237,
+      "min": 0,
+      "max": 10000000,
+      "description": "Population of cardholder city."
+    },
+    {
+      "name": "job",
+      "type": "categorical",
+      "role": "feature",
+      "required": true,
+      "default": "Engineer",
+      "allowed": ["Engineer", "Teacher", "Nurse", "Sales", "Driver", "Developer", "Designer", "Accountant", "Student", "Retired"],
+      "description": "Cardholder job category."
+    },
+    {
+      "name": "dob",
+      "type": "date",
+      "role": "feature",
+      "required": true,
+      "default": "1988-04-12",
+      "derive": ["age_years"],
+      "reference_datetime_field": "trans_date_trans_time",
+      "include_raw": false,
+      "description": "Cardholder date of birth."
+    },
+    {
+      "name": "trans_num",
+      "type": "text",
+      "role": "entity",
+      "train": false,
+      "required": true,
+      "default": "0b242abb623afc578575680df30655b9",
+      "description": "Unique transaction identifier."
+    },
+    {
+      "name": "unix_time",
+      "type": "integer",
+      "role": "feature",
+      "required": true,
+      "default": 1371816865,
+      "min": 0,
+      "max": 2200000000,
+      "description": "Unix timestamp."
+    },
+    {
+      "name": "merch_lat",
+      "type": "number",
+      "role": "feature",
+      "required": true,
+      "default": 33.986391,
+      "min": -90,
+      "max": 90,
+      "description": "Merchant latitude."
+    },
+    {
+      "name": "merch_long",
+      "type": "number",
+      "role": "feature",
+      "required": true,
+      "default": -81.200714,
+      "min": -180,
+      "max": 180,
+      "description": "Merchant longitude."
+    },
+    {
+      "name": "old_balance",
+      "type": "number",
+      "role": "feature",
+      "required": false,
+      "default": 2400.0,
+      "min": 0,
+      "max": 1000000,
+      "description": "Optional lab extension for balance before transaction."
+    },
+    {
+      "name": "new_balance",
+      "type": "number",
+      "role": "feature",
+      "required": false,
+      "default": 2313.57,
+      "min": 0,
+      "max": 1000000,
+      "description": "Optional lab extension for balance after transaction."
+    },
+    {
+      "name": "is_fraud",
+      "type": "boolean",
+      "role": "target",
+      "train": false,
+      "required": false,
+      "default": false,
+      "description": "Target variable: 1 for fraud, 0 for legitimate transaction."
+    }
+  ]
+}

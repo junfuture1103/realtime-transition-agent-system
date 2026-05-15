@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Realtime Fraud Agent Lab</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="shell topbar">
+      <div>
+        <p class="eyebrow">AI Attack / Defense Education</p>
+        <h1>Realtime Fraud Agent Lab</h1>
+      </div>
+      <div class="model-chip" id="modelChip">loading</div>
+    </header>
+
+    <main class="shell app-grid">
+      <section class="panel nav-panel">
+        <button class="tab active" data-tab="live">거래</button>
+        <button class="tab" data-tab="create">생성</button>
+        <button class="tab" data-tab="bot">봇</button>
+        <button class="tab" data-tab="training">학습</button>
+        <button class="tab" data-tab="intel">공방</button>
+        <button class="tab" data-tab="mcp">MCP</button>
+      </section>
+
+      <section class="workspace">
+        <div class="stats" id="stats"></div>
+
+        <section class="view active" id="view-live">
+          <div class="section-head">
+            <h2>실시간 거래</h2>
+            <div class="toolbar">
+              <button id="refreshBtn">새로고침</button>
+              <button id="simulateBtn">시뮬레이션 20건</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>시간</th>
+                  <th>계정</th>
+                  <th>금액</th>
+                  <th>채널</th>
+                  <th>위험</th>
+                  <th>사유</th>
+                  <th>라벨</th>
+                </tr>
+              </thead>
+              <tbody id="transactionRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view" id="view-create">
+          <div class="section-head">
+            <h2>수동 거래 생성</h2>
+            <button id="submitTransactionBtn">전송</button>
+          </div>
+          <div class="schema-example" id="schemaExample"></div>
+          <form class="form-grid" id="transactionForm"></form>
+        </section>
+
+        <section class="view" id="view-bot">
+          <div class="section-head">
+            <h2>실시간 거래 봇</h2>
+            <div class="toolbar">
+              <button id="startBotBtn">시작</button>
+              <button id="stopBotBtn">정지</button>
+            </div>
+          </div>
+          <div class="bot-grid">
+            <div class="panel inset bot-card">
+              <h3>봇 설정</h3>
+              <div class="form-grid bot-form">
+                <div class="field">
+                  <label for="botIntervalInput">interval_seconds</label>
+                  <input id="botIntervalInput" type="number" min="0.25" max="60" step="0.25" value="2" />
+                </div>
+                <div class="field">
+                  <label for="botBatchInput">batch_size</label>
+                  <input id="botBatchInput" type="number" min="1" max="25" step="1" value="1" />
+                </div>
+                <div class="field">
+                  <label for="botFraudRateInput">fraud_rate</label>
+                  <input id="botFraudRateInput" type="number" min="0" max="1" step="0.01" value="0.12" />
+                </div>
+              </div>
+            </div>
+            <div class="panel inset bot-card">
+              <h3>봇 상태</h3>
+              <div id="botStatus" class="stack compact"></div>
+            </div>
+          </div>
+          <div class="panel inset red-blue-log">
+            <h3>봇이 생성한 최근 거래</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>시간</th>
+                    <th>계정</th>
+                    <th>금액</th>
+                    <th>위험</th>
+                    <th>사유</th>
+                  </tr>
+                </thead>
+                <tbody id="botTransactionRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-training">
+          <div class="section-head">
+            <h2>모델 업데이트</h2>
+            <button id="retrainBtn">재학습</button>
+          </div>
+          <div class="split">
+            <div class="panel inset">
+              <h3>업데이트 로그</h3>
+              <div id="modelUpdates" class="stack"></div>
+            </div>
+            <div class="panel inset">
+              <h3>학습 데이터 로그</h3>
+              <div id="trainingLogs" class="stack compact"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-intel">
+          <div class="section-head">
+            <h2>공격팀 / 방어팀</h2>
+            <button id="intelRefreshBtn">동기화</button>
+          </div>
+          <div class="split">
+            <div class="panel inset accent-red">
+              <h3>공격팀 인텔</h3>
+              <div id="attackerIntel" class="stack"></div>
+            </div>
+            <div class="panel inset accent-green">
+              <h3>방어팀 상태</h3>
+              <div id="defenderIntel" class="stack"></div>
+            </div>
+          </div>
+          <div class="panel inset red-blue-log">
+            <h3>공격 / 방어 로그</h3>
+            <div id="redBlueLogs" class="stack compact"></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-mcp">
+          <div class="section-head">
+            <h2>에이전트 액션</h2>
+            <div class="toolbar">
+              <input id="mcpAccountInput" type="text" placeholder="acct-demo-001" />
+              <button id="mcpReviewBtn">검토</button>
+              <button id="mcpRestoreBtn">복구</button>
+            </div>
+          </div>
+          <div class="split">
+            <div class="panel inset">
+              <h3>계정</h3>
+              <div id="accountList" class="stack compact"></div>
+            </div>
+            <div class="panel inset">
+              <h3>액션 로그</h3>
+              <div id="actionList" class="stack compact"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,163 @@
+{
+  "schema_id": "creditcard_fraud_v1",
+  "display_name": "Credit-card style fraud stream",
+  "description": "A flexible educational schema inspired by common fraud-detection datasets. Edit this file to swap columns, thresholds, and training behavior.",
+  "target": "is_fraud",
+  "allow_unknown_features": false,
+  "decision": {
+    "review_threshold": 0.58,
+    "block_threshold": 0.82
+  },
+  "retrain": {
+    "min_samples": 40,
+    "supervised_min_labeled": 30,
+    "max_recent_samples": 5000,
+    "retrain_every": 12,
+    "allow_high_confidence_pseudo_labels": true,
+    "pseudo_label_min_confidence": 0.94,
+    "isolation_contamination": 0.08
+  },
+  "fields": [
+    {
+      "name": "account_id",
+      "type": "text",
+      "role": "entity",
+      "train": false,
+      "required": true,
+      "default": "acct-demo-001",
+      "description": "Account identifier used by the agent policy layer."
+    },
+    {
+      "name": "amount",
+      "type": "number",
+      "role": "feature",
+      "required": true,
+      "default": 82000,
+      "min": 0,
+      "max": 10000000,
+      "description": "Transaction amount in KRW."
+    },
+    {
+      "name": "merchant_category",
+      "type": "categorical",
+      "role": "feature",
+      "required": true,
+      "default": "retail",
+      "allowed": ["retail", "grocery", "transport", "travel", "electronics", "gift_card", "crypto", "gaming", "utility", "cash_out"],
+      "description": "Merchant or recipient category."
+    },
+    {
+      "name": "channel",
+      "type": "categorical",
+      "role": "feature",
+      "required": true,
+      "default": "mobile",
+      "allowed": ["mobile", "web", "atm", "branch", "api"],
+      "description": "Transaction channel."
+    },
+    {
+      "name": "country",
+      "type": "categorical",
+      "role": "feature",
+      "required": true,
+      "default": "KR",
+      "allowed": ["KR", "US", "JP", "SG", "VN", "CN", "RU", "NG", "BR", "GB"],
+      "description": "Country code inferred from the transaction context."
+    },
+    {
+      "name": "payment_method",
+      "type": "categorical",
+      "role": "feature",
+      "required": true,
+      "default": "card",
+      "allowed": ["card", "bank_transfer", "wallet", "virtual_account", "crypto_wallet"],
+      "description": "Payment rail used for the transaction."
+    },
+    {
+      "name": "transaction_hour",
+      "type": "integer",
+      "role": "feature",
+      "required": true,
+      "default": 14,
+      "min": 0,
+      "max": 23,
+      "description": "Local hour when the transaction happened."
+    },
+    {
+      "name": "account_age_days",
+      "type": "integer",
+      "role": "feature",
+      "required": true,
+      "default": 620,
+      "min": 0,
+      "max": 5000,
+      "description": "Age of account in days."
+    },
+    {
+      "name": "device_trust_score",
+      "type": "number",
+      "role": "feature",
+      "required": true,
+      "default": 0.78,
+      "min": 0,
+      "max": 1,
+      "description": "Device reputation score from 0 to 1."
+    },
+    {
+      "name": "recipient_risk_score",
+      "type": "number",
+      "role": "feature",
+      "required": true,
+      "default": 0.18,
+      "min": 0,
+      "max": 1,
+      "description": "Recipient risk score from 0 to 1."
+    },
+    {
+      "name": "velocity_10m",
+      "type": "integer",
+      "role": "feature",
+      "required": true,
+      "default": 1,
+      "min": 0,
+      "max": 80,
+      "description": "Number of recent account transactions in the last 10 minutes."
+    },
+    {
+      "name": "prior_failed_attempts",
+      "type": "integer",
+      "role": "feature",
+      "required": true,
+      "default": 0,
+      "min": 0,
+      "max": 20,
+      "description": "Failed payment or login attempts observed recently."
+    },
+    {
+      "name": "is_international",
+      "type": "boolean",
+      "role": "feature",
+      "required": true,
+      "default": false,
+      "description": "Whether the transaction crossed country boundaries."
+    },
+    {
+      "name": "customer_segment",
+      "type": "categorical",
+      "role": "feature",
+      "required": true,
+      "default": "standard",
+      "allowed": ["student", "standard", "premium", "business", "new_user"],
+      "description": "Coarse account segment."
+    },
+    {
+      "name": "is_fraud",
+      "type": "boolean",
+      "role": "target",
+      "train": false,
+      "required": false,
+      "default": false,
+      "description": "Optional ground-truth label for supervised retraining."
+    }
+  ]
+}
