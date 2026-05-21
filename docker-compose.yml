@@ -11,14 +11,19 @@ services:
       FRAUD_LAB_SCHEMA_PATH: /app/configs/schemas/kaggle_fraud_transactions.json
       FRAUD_LAB_MODEL_DIR: /app/data/models
       FRAUD_LAB_ADMIN_PASSWORD: ${FRAUD_LAB_ADMIN_PASSWORD:-}
-      FRAUD_LAB_STREAM_DATASET_MANIFEST: ${FRAUD_LAB_STREAM_DATASET_MANIFEST:-/app/data/generated/realtime_financial_transactions_3000/manifest.json}
+      FRAUD_LAB_STREAM_DATASET_MANIFEST: ${FRAUD_LAB_STREAM_DATASET_MANIFEST:-/app/release_dataset/manifest.json}
       FRAUD_LAB_BOT_AUTO_START: ${FRAUD_LAB_BOT_AUTO_START:-true}
-      FRAUD_LAB_BOT_LOOP_DATASET: ${FRAUD_LAB_BOT_LOOP_DATASET:-true}
-      FRAUD_LAB_BOT_INTERVAL_SECONDS: ${FRAUD_LAB_BOT_INTERVAL_SECONDS:-1}
+      FRAUD_LAB_BOT_LOOP_DATASET: ${FRAUD_LAB_BOT_LOOP_DATASET:-false}
+      FRAUD_LAB_BOT_INTERVAL_SECONDS: ${FRAUD_LAB_BOT_INTERVAL_SECONDS:-0.5}
       FRAUD_LAB_BOT_BATCH_SIZE: ${FRAUD_LAB_BOT_BATCH_SIZE:-1}
       FRAUD_LAB_BOT_REPLAY_SPEED: ${FRAUD_LAB_BOT_REPLAY_SPEED:-3600}
+      FRAUD_LAB_BOT_RANDOM_INTERVAL: ${FRAUD_LAB_BOT_RANDOM_INTERVAL:-true}
+      FRAUD_LAB_BOT_MIN_INTERVAL_SECONDS: ${FRAUD_LAB_BOT_MIN_INTERVAL_SECONDS:-0.05}
+      FRAUD_LAB_BOT_MAX_INTERVAL_SECONDS: ${FRAUD_LAB_BOT_MAX_INTERVAL_SECONDS:-2.0}
     volumes:
       - fraud_lab_data:/app/data
+      - ${FRAUD_LAB_RELEASE_DATASET_DIR:-./data/generated/realtime_financial_transactions_v2_fixed_10000000}:/app/release_dataset:ro
+      - ./data/generated/reports:/app/static/reports:ro
 
 volumes:
   fraud_lab_data:

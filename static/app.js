@@ -8,6 +8,8 @@ const state = {
   labelMetrics: null,
 };
 
+const DASHBOARD_REFRESH_INTERVAL_MS = 5000;
+
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
@@ -191,7 +193,7 @@ function renderHealth(health) {
     metricCard("이상거래 탐지율", pct(Number(stats.detection_rate || 0) * 100, 1)),
     metricCard("검토/차단", compactNumber(stats.detected ?? 0)),
     metricCard("정답 공개", `${compactNumber(stats.revealed_truth || 0)}/${compactNumber(truth.total_truth || 0)}`),
-    metricCard("모델 일치율", hasRevealed ? pct(Number(stats.model_accuracy || 0) * 100, 1) : "대기"),
+    metricCard("모델 정확도", hasRevealed ? pct(Number(stats.model_accuracy || 0) * 100, 1) : "대기"),
     metricCard("공격 성공률", hasRevealed ? pct(Number(stats.attack_success_rate || 0) * 100, 1) : "대기"),
   ].join("");
   renderLabelRevealStatus(health);
@@ -205,8 +207,8 @@ function renderLabelRevealStatus(health) {
   node.innerHTML = `
     <article class="item">
       <div class="item-head"><span>공개 대기 ${compactNumber(truth.unrevealed || 0)}</span><span>공개됨 ${compactNumber(truth.revealed || 0)}</span></div>
-      <div class="meta">전체 truth=${compactNumber(truth.total_truth || 0)} · 최신 데이터=${formatTime(truth.latest_dataset_time)}</div>
-      <div class="meta">최신 공개=${formatTime(truth.latest_revealed_dataset_time)} · 일치율=${Number(stats.revealed_truth || 0) ? pct(Number(stats.model_accuracy || 0) * 100, 1) : "대기"}</div>
+      <div class="meta">현재 공개된 모집단 truth=${compactNumber(truth.total_truth || 0)} · 최신 데이터=${formatTime(truth.latest_dataset_time)}</div>
+      <div class="meta">최신 공개=${formatTime(truth.latest_revealed_dataset_time)} · 모델 정확도=${Number(stats.revealed_truth || 0) ? pct(Number(stats.model_accuracy || 0) * 100, 1) : "대기"}</div>
       <div class="meta">사기 탐지율=${Number(stats.revealed_truth || 0) ? pct(Number(stats.fraud_recall || 0) * 100, 1) : "대기"} · 공격 성공률=${Number(stats.revealed_truth || 0) ? pct(Number(stats.attack_success_rate || 0) * 100, 1) : "대기"}</div>
     </article>
   `;
@@ -409,9 +411,8 @@ function renderLabelMetrics(metrics) {
   $("#labelRevealChip").textContent = revealed;
   if (!rows.length) {
     renderKpis("#labelKpis", [
-      { label: "공개 window", value: "0" },
-      { label: "모델 일치율", value: "대기" },
-      { label: "공격 성공률", value: "대기" },
+      { label: "모델 정확도", value: "대기" },
+      { label: "공격 성공률(오탐률)", value: "대기" },
     ]);
     renderLegend("#labelLegend", [
       { label: "실제 fraud rate", color: chartColor("--blue") },
@@ -503,9 +504,8 @@ function renderLabelMetrics(metrics) {
   ctx.fillText(`latest acc ${pct(latest.accuracyRate, 1)}`, padding.left, height - 8);
 
   renderKpis("#labelKpis", [
-    { label: "공개 window", value: compactNumber(series.length) },
-    { label: "모델 일치율", value: pct(latest.accuracyRate, 1) },
-    { label: "공격 성공률", value: pct(latestAttackSuccess * 100, 1) },
+    { label: "모델 정확도", value: pct(latest.accuracyRate, 1) },
+    { label: "공격 성공률(오탐률)", value: pct(latestAttackSuccess * 100, 1) },
   ]);
   renderLegend("#labelLegend", [
     { label: "실제 fraud rate", color: blue },
@@ -850,14 +850,13 @@ async function stopBot() {
 }
 
 async function revealTruthLabels() {
-  const limit = Number($("#labelRevealLimitInput").value || 3000);
   const retrainAfter = $("#labelRevealRetrainInput").checked;
   const response = await fetchJson("/api/admin/labels/reveal", {
     method: "POST",
     headers: adminHeaders(),
-    body: JSON.stringify({ limit, retrain_after: retrainAfter }),
+    body: JSON.stringify({ reveal_all: true, retrain_after: retrainAfter }),
   });
-  toast(`${response.result.revealed}건의 정답 라벨을 공개했습니다.`);
+  toast(`${response.result.revealed}건의 공개 데이터에 정답 라벨을 부여했습니다.`);
   await refreshAll();
 }
 
@@ -912,11 +911,7 @@ loadBase().catch((error) => {
 
 setInterval(() => {
   refreshAll().catch((error) => console.error(error));
-}, 5000);
-
-setInterval(() => {
-  refreshMetrics().catch((error) => console.error(error));
-}, 1000);
+}, DASHBOARD_REFRESH_INTERVAL_MS);
 
 window.addEventListener("resize", () => {
   renderStreamMetrics(state.streamMetrics);

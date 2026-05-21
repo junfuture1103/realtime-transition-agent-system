@@ -258,6 +258,178 @@ class Repository:
                 ).fetchall()
         return [self._transaction_from_row(row) for row in rows]
 
+    def list_transactions_with_truth(
+        self, limit: int = 100, schema_id: str | None = None, source: str | None = None
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            if schema_id and source:
+                rows = conn.execute(
+                    """
+                    SELECT
+                        t.*,
+                        CASE
+                            WHEN d.revealed_at IS NOT NULL THEN d.true_label
+                            ELSE NULL
+                        END AS truth_label,
+                        d.revealed_at AS truth_revealed_at,
+                        d.reveal_batch_id AS truth_reveal_batch_id,
+                        d.dataset_time AS truth_dataset_time
+                    FROM transactions t
+                    LEFT JOIN dataset_truth_labels d ON d.transaction_id = t.id
+                    WHERE t.schema_id = ? AND t.source = ?
+                    ORDER BY t.created_at DESC
+                    LIMIT ?
+                    """,
+                    (schema_id, source, limit),
+                ).fetchall()
+            elif schema_id:
+                rows = conn.execute(
+                    """
+                    SELECT
+                        t.*,
+                        CASE
+                            WHEN d.revealed_at IS NOT NULL THEN d.true_label
+                            ELSE NULL
+                        END AS truth_label,
+                        d.revealed_at AS truth_revealed_at,
+                        d.reveal_batch_id AS truth_reveal_batch_id,
+                        d.dataset_time AS truth_dataset_time
+                    FROM transactions t
+                    LEFT JOIN dataset_truth_labels d ON d.transaction_id = t.id
+                    WHERE t.schema_id = ?
+                    ORDER BY t.created_at DESC
+                    LIMIT ?
+                    """,
+                    (schema_id, limit),
+                ).fetchall()
+            elif source:
+                rows = conn.execute(
+                    """
+                    SELECT
+                        t.*,
+                        CASE
+                            WHEN d.revealed_at IS NOT NULL THEN d.true_label
+                            ELSE NULL
+                        END AS truth_label,
+                        d.revealed_at AS truth_revealed_at,
+                        d.reveal_batch_id AS truth_reveal_batch_id,
+                        d.dataset_time AS truth_dataset_time
+                    FROM transactions t
+                    LEFT JOIN dataset_truth_labels d ON d.transaction_id = t.id
+                    WHERE t.source = ?
+                    ORDER BY t.created_at DESC
+                    LIMIT ?
+                    """,
+                    (source, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT
+                        t.*,
+                        CASE
+                            WHEN d.revealed_at IS NOT NULL THEN d.true_label
+                            ELSE NULL
+                        END AS truth_label,
+                        d.revealed_at AS truth_revealed_at,
+                        d.reveal_batch_id AS truth_reveal_batch_id,
+                        d.dataset_time AS truth_dataset_time
+                    FROM transactions t
+                    LEFT JOIN dataset_truth_labels d ON d.transaction_id = t.id
+                    ORDER BY t.created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        result = []
+        for row in rows:
+            item = self._transaction_from_row(row)
+            item["truth_label"] = row["truth_label"]
+            item["truth_revealed_at"] = row["truth_revealed_at"]
+            item["truth_reveal_batch_id"] = row["truth_reveal_batch_id"]
+            item["truth_dataset_time"] = row["truth_dataset_time"]
+            result.append(item)
+        return result
+
+    def iter_transactions_with_truth(
+        self,
+        *,
+        limit: int | None = None,
+        schema_id: str | None = None,
+        source: str | None = None,
+        revealed_only: bool = False,
+        oldest_first: bool = False,
+    ) -> Iterable[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if schema_id:
+            clauses.append("t.schema_id = ?")
+            params.append(schema_id)
+        if source:
+            clauses.append("t.source = ?")
+            params.append(source)
+        if revealed_only:
+            clauses.append("d.revealed_at IS NOT NULL")
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order_by = (
+            "COALESCE(d.dataset_time, t.created_at) ASC, t.created_at ASC"
+            if oldest_first
+            else "t.created_at DESC"
+        )
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = "LIMIT ?"
+            params.append(max(1, int(limit)))
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    t.*,
+                    CASE
+                        WHEN d.revealed_at IS NOT NULL THEN d.true_label
+                        ELSE NULL
+                    END AS truth_label,
+                    d.revealed_at AS truth_revealed_at,
+                    d.reveal_batch_id AS truth_reveal_batch_id,
+                    d.dataset_time AS truth_dataset_time
+                FROM transactions t
+                LEFT JOIN dataset_truth_labels d ON d.transaction_id = t.id
+                {where_clause}
+                ORDER BY {order_by}
+                {limit_clause}
+                """,
+                params,
+            )
+            for row in rows:
+                item = self._transaction_from_row(row)
+                item["truth_label"] = row["truth_label"]
+                item["truth_revealed_at"] = row["truth_revealed_at"]
+                item["truth_reveal_batch_id"] = row["truth_reveal_batch_id"]
+                item["truth_dataset_time"] = row["truth_dataset_time"]
+                yield item
+
+    def latest_truth_revealed_at(
+        self, schema_id: str | None = None, source: str | None = None
+    ) -> str | None:
+        clauses = ["revealed_at IS NOT NULL"]
+        params: list[Any] = []
+        if schema_id:
+            clauses.append("schema_id = ?")
+            params.append(schema_id)
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT MAX(revealed_at)
+                FROM dataset_truth_labels
+                WHERE {' AND '.join(clauses)}
+                """,
+                params,
+            ).fetchone()
+        return row[0] if row and row[0] else None
+
     def get_transaction(self, transaction_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute(
@@ -648,10 +820,9 @@ class Repository:
 
     def reveal_dataset_truth_labels(
         self,
-        limit: int,
+        limit: int | None = None,
         schema_id: str | None = None,
     ) -> dict[str, Any]:
-        limit = max(1, min(limit, 3000))
         revealed_at = utc_now()
         reveal_batch_id = str(uuid.uuid4())
         with self.connect() as conn:
@@ -660,14 +831,17 @@ class Repository:
             if schema_id:
                 schema_clause = "AND schema_id = ?"
                 params.append(schema_id)
-            params.append(limit)
+            limit_clause = ""
+            if limit is not None:
+                limit_clause = "LIMIT ?"
+                params.append(max(1, min(int(limit), 1_000_000)))
             rows = conn.execute(
                 f"""
                 SELECT transaction_id, true_label, dataset_time, predicted_label
                 FROM dataset_truth_labels
                 WHERE revealed_at IS NULL {schema_clause}
                 ORDER BY dataset_time ASC, created_at ASC
-                LIMIT ?
+                {limit_clause}
                 """,
                 params,
             ).fetchall()

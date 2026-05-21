@@ -43,6 +43,14 @@ BOT_LOOP_DATASET = os.getenv("FRAUD_LAB_BOT_LOOP_DATASET", "true").strip().lower
 BOT_INTERVAL_SECONDS = float(os.getenv("FRAUD_LAB_BOT_INTERVAL_SECONDS", "1"))
 BOT_BATCH_SIZE = int(os.getenv("FRAUD_LAB_BOT_BATCH_SIZE", "1"))
 BOT_REPLAY_SPEED = float(os.getenv("FRAUD_LAB_BOT_REPLAY_SPEED", "3600"))
+BOT_RANDOM_INTERVAL = os.getenv("FRAUD_LAB_BOT_RANDOM_INTERVAL", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+BOT_MIN_INTERVAL_SECONDS = float(os.getenv("FRAUD_LAB_BOT_MIN_INTERVAL_SECONDS", "0.05"))
+BOT_MAX_INTERVAL_SECONDS = float(os.getenv("FRAUD_LAB_BOT_MAX_INTERVAL_SECONDS", "2.0"))
 
 
 def ensure_runtime_dirs() -> None:

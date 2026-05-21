@@ -41,7 +41,7 @@
               <div class="chart-head">
                 <div>
                   <h3>실시간 유입</h3>
-                  <div class="chart-subtitle">최근 3분 초당 거래량</div>
+                  <div class="chart-subtitle">최근 3분 초당 거래량 · 5초마다 갱신</div>
                 </div>
                 <div class="live-chip" id="streamPulse">0/s</div>
               </div>
@@ -110,8 +110,8 @@
               <h3>봇 설정</h3>
               <div class="form-grid bot-form">
                 <div class="field">
-                  <label for="botIntervalInput">interval_seconds</label>
-                  <input id="botIntervalInput" type="number" min="1" max="60" step="1" value="1" />
+                  <label for="botIntervalInput">avg_interval_seconds</label>
+                  <input id="botIntervalInput" type="number" min="0.05" max="60" step="0.05" value="0.5" />
                 </div>
                 <div class="field">
                   <label for="botBatchInput">batch_size</label>
@@ -141,15 +141,14 @@
           </div>
           <div class="admin-grid">
             <div class="panel inset admin-card">
-              <h3>정답 라벨 공개</h3>
+              <h3>전체 공개 데이터 정답 라벨 부여</h3>
               <div id="labelRevealStatus" class="stack compact"></div>
               <div class="toolbar admin-toolbar">
-                <input id="labelRevealLimitInput" type="number" min="1" max="3000" step="100" value="3000" />
                 <label class="checkline" for="labelRevealRetrainInput">
                   <input id="labelRevealRetrainInput" type="checkbox" />
                   공개 후 재학습
                 </label>
-                <button id="labelRevealBtn">이전 데이터 라벨 공개</button>
+                <button id="labelRevealBtn">정답 라벨 일괄 부여</button>
               </div>
             </div>
             <div class="panel inset admin-card">

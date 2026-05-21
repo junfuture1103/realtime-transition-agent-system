@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import random
 import secrets
 import uuid
 from contextlib import asynccontextmanager
@@ -12,7 +13,7 @@ from typing import Any
 
 from fastapi import Body, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from fraud_lab import config
@@ -101,6 +102,7 @@ class RealtimeTransactionBot:
             "fraud_rate": self.fraud_rate,
             "stream_mode": self.stream_mode,
             "replay_speed": self.replay_speed,
+            "random_interval": config.BOT_RANDOM_INTERVAL,
             "label_policy": self.label_policy,
             "generated": self.generated,
             "started_at": self.started_at,
@@ -122,7 +124,7 @@ class RealtimeTransactionBot:
                             if config.BOT_LOOP_DATASET:
                                 self.stream.reset()
                                 self.last_error = None
-                                await asyncio.sleep(self.interval_seconds)
+                                await asyncio.sleep(self._next_interval_delay())
                                 continue
                             self.last_error = "dataset exhausted"
                             break
@@ -133,7 +135,7 @@ class RealtimeTransactionBot:
                     self.last_error = None
                 except Exception as exc:  # noqa: BLE001 - exposed in bot status for lab debugging.
                     self.last_error = str(exc)
-                await asyncio.sleep(self.interval_seconds)
+                await asyncio.sleep(self._next_interval_delay())
         finally:
             self.running = False
 
@@ -157,6 +159,15 @@ class RealtimeTransactionBot:
             return
         if self.generated % self.retrain_every_generated < emitted:
             _maybe_retrain(reason=reason)
+
+    def _next_interval_delay(self) -> float:
+        mean_delay = max(0.05, float(self.interval_seconds))
+        if not config.BOT_RANDOM_INTERVAL:
+            return mean_delay
+        delay = random.expovariate(1.0 / mean_delay)
+        minimum = max(0.01, float(config.BOT_MIN_INTERVAL_SECONDS))
+        maximum = max(minimum, float(config.BOT_MAX_INTERVAL_SECONDS))
+        return min(maximum, max(minimum, delay))
 
     def _emit_dataset_batch(self) -> int:
         emitted = 0
@@ -301,15 +312,25 @@ def transactions(limit: int = 100) -> dict[str, Any]:
 
 
 @app.get("/api/realtime-transactions.csv")
-def realtime_transactions_csv(limit: int = 3000) -> Response:
-    limit = max(1, min(limit, 3000))
-    rows = repository.list_transactions(limit=limit, schema_id=model_manager.schema.schema_id)
+def realtime_transactions_csv(
+    limit: int | None = None,
+    labeled_only: bool = False,
+) -> StreamingResponse:
+    export_limit = None if labeled_only else max(1, min(limit or 3000, 3000))
+    latest_truth_revealed_at = repository.latest_truth_revealed_at(
+        schema_id=model_manager.schema.schema_id,
+        source="world_bot",
+    )
+    filename_timestamp = _download_filename_timestamp(latest_truth_revealed_at)
+    export_kind = "labeled" if labeled_only else "public"
+    filename = f"realtime-transactions-{export_kind}-{filename_timestamp}.csv"
     payload_columns = [
         field["name"]
         for field in model_manager.schema.fields
         if field.get("role") != "target"
     ]
     columns = [
+        "export_latest_truth_revealed_at",
         "created_at",
         "transaction_id",
         "account_id",
@@ -318,34 +339,62 @@ def realtime_transactions_csv(limit: int = 3000) -> Response:
         "anomaly_score",
         "risk_label",
         "predicted_label",
-        "revealed_label",
-        "label_source",
+        "truth_label",
+        "truth_label_source",
+        "truth_revealed_at",
+        "truth_reveal_batch_id",
+        "truth_dataset_time",
         *payload_columns,
     ]
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
-    writer.writeheader()
-    for row in rows:
-        payload = row.get("payload", {})
-        writer.writerow(
-            {
-                "created_at": row.get("created_at"),
-                "transaction_id": row.get("id"),
-                "account_id": row.get("account_id"),
-                "source": row.get("source"),
-                "model_version": row.get("model_version"),
-                "anomaly_score": row.get("anomaly_score"),
-                "risk_label": row.get("risk_label"),
-                "predicted_label": row.get("decision", {}).get("predicted_label"),
-                "revealed_label": row.get("label"),
-                "label_source": row.get("label_source"),
-                **{column: payload.get(column) for column in payload_columns},
-            }
+
+    def stream_rows():
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        yield output.getvalue()
+        output.seek(0)
+        output.truncate(0)
+        rows = repository.iter_transactions_with_truth(
+            limit=export_limit,
+            schema_id=model_manager.schema.schema_id,
+            source="world_bot",
+            revealed_only=labeled_only,
+            oldest_first=labeled_only,
         )
-    return Response(
-        content=output.getvalue(),
+        for row in rows:
+            payload = row.get("payload", {})
+            writer.writerow(
+                {
+                    "export_latest_truth_revealed_at": latest_truth_revealed_at,
+                    "created_at": row.get("created_at"),
+                    "transaction_id": row.get("id"),
+                    "account_id": row.get("account_id"),
+                    "source": row.get("source"),
+                    "model_version": row.get("model_version"),
+                    "anomaly_score": row.get("anomaly_score"),
+                    "risk_label": row.get("risk_label"),
+                    "predicted_label": row.get("decision", {}).get("predicted_label"),
+                    "truth_label": row.get("truth_label"),
+                    "truth_label_source": "admin_truth_reveal"
+                    if row.get("truth_label") is not None
+                    else None,
+                    "truth_revealed_at": row.get("truth_revealed_at"),
+                    "truth_reveal_batch_id": row.get("truth_reveal_batch_id"),
+                    "truth_dataset_time": row.get("truth_dataset_time"),
+                    **{column: payload.get(column) for column in payload_columns},
+                }
+            )
+            yield output.getvalue()
+            output.seek(0)
+            output.truncate(0)
+
+    return StreamingResponse(
+        stream_rows(),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="realtime-transactions.csv"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Last-Truth-Revealed-At": latest_truth_revealed_at or "",
+        },
     )
 
 
@@ -523,7 +572,7 @@ def reveal_truth_labels(
 ) -> dict[str, Any]:
     _require_admin_password(request.admin_password, x_admin_token)
     result = repository.reveal_dataset_truth_labels(
-        limit=request.limit,
+        limit=None if request.reveal_all else request.limit,
         schema_id=model_manager.schema.schema_id,
     )
     update = None
@@ -662,8 +711,15 @@ def _parse_datetime(value: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _download_filename_timestamp(value: str | None) -> str:
+    if not value:
+        return "no-labels"
+    return _parse_datetime(value).astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
 def _bootstrap_model() -> None:
     schema_id = model_manager.schema.schema_id
+    config_schema = FraudModelManager(config.SCHEMA_PATH, config.MODEL_DIR).schema
     latest_any = repository.latest_model_update()
     if latest_any:
         model_manager.metadata["version"] = latest_any["version"]
@@ -675,8 +731,9 @@ def _bootstrap_model() -> None:
     if latest and Path(latest["artifact_path"]).exists():
         model_manager.load_artifact(latest["artifact_path"])
         if model_manager.schema.schema_id == schema_id:
+            model_manager.schema = config_schema
             return
-        model_manager.schema = FraudModelManager(config.SCHEMA_PATH, config.MODEL_DIR).schema
+        model_manager.schema = config_schema
         model_manager.pipeline = None
         model_manager.metadata["version"] = latest_any["version"] if latest_any else 0
 

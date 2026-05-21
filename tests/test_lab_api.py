@@ -15,6 +15,10 @@ def build_client(tmp_path, monkeypatch):
     monkeypatch.delenv("FRAUD_LAB_BOT_INTERVAL_SECONDS", raising=False)
     monkeypatch.delenv("FRAUD_LAB_BOT_BATCH_SIZE", raising=False)
     monkeypatch.delenv("FRAUD_LAB_BOT_REPLAY_SPEED", raising=False)
+    monkeypatch.delenv("FRAUD_LAB_BOT_RANDOM_INTERVAL", raising=False)
+    monkeypatch.delenv("FRAUD_LAB_BOT_MIN_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("FRAUD_LAB_BOT_MAX_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("FRAUD_LAB_RELEASE_DATASET_DIR", raising=False)
 
     import fraud_lab.config as config
 
@@ -96,7 +100,14 @@ def test_lab_core_flow(tmp_path, monkeypatch):
         csv_export = client.get("/api/realtime-transactions.csv?limit=5")
         assert csv_export.status_code == 200
         assert csv_export.headers["content-type"].startswith("text/csv")
-        assert "created_at,transaction_id,account_id" in csv_export.text
+        assert "export_latest_truth_revealed_at,created_at,transaction_id,account_id" in csv_export.text
+        assert "truth_label,truth_label_source,truth_revealed_at" in csv_export.text
+        assert "realtime-transactions-public-no-labels.csv" in csv_export.headers["content-disposition"]
+        assert "x-last-truth-revealed-at" in csv_export.headers
+
+        reveal = client.post("/api/admin/labels/reveal", json={"reveal_all": True})
+        assert reveal.status_code == 200
+        assert reveal.json()["result"]["revealed"] >= 0
 
         mcp = client.post(
             "/mcp",

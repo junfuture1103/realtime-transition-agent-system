@@ -21,7 +21,7 @@ class SimulationRequest(BaseModel):
 
 
 class BotStartRequest(BaseModel):
-    interval_seconds: float = Field(default=1.0, ge=1, le=60)
+    interval_seconds: float = Field(default=1.0, ge=0.05, le=60)
     batch_size: int = Field(default=1, ge=1, le=25)
     fraud_rate: float = Field(default=0.12, ge=0, le=1)
     stream_mode: Literal["dataset", "synthetic"] = "dataset"
@@ -43,7 +43,8 @@ class AdminLoginRequest(BaseModel):
 
 
 class TruthRevealRequest(BaseModel):
-    limit: int = Field(default=3000, ge=1, le=3000)
+    limit: int | None = Field(default=None, ge=1, le=1_000_000)
+    reveal_all: bool = True
     retrain_after: bool = False
     admin_password: str | None = Field(default=None, max_length=256)
 
