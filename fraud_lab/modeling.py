@@ -9,11 +9,20 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline
 from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.feature_extraction import DictVectorizer
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import RobustScaler
 
 
 def utc_now() -> str:
@@ -81,6 +90,8 @@ class FeatureSchema:
         warnings: list[str] = []
         for field in self.fields:
             name = field["name"]
+            if field.get("role") == "target" and name not in payload:
+                continue
             if name in payload and payload[name] not in ("", None):
                 value = payload[name]
             else:
@@ -301,7 +312,7 @@ class FraudModelManager:
         features = self.schema.feature_dict(normalized)
         if self.pipeline is None:
             score = self._heuristic_score(normalized)
-        elif self.model_kind in {"supervised_random_forest", "schema_driven_random_forest"}:
+        elif hasattr(self.pipeline, "predict_proba"):
             proba = self.pipeline.predict_proba([features])[0]
             classes = list(self.pipeline.named_steps["model"].classes_)
             score = float(proba[classes.index(1)]) if 1 in classes else float(max(proba))
@@ -416,23 +427,38 @@ class FraudModelManager:
     ) -> tuple[Pipeline, dict[str, Any], list[dict[str, Any]]]:
         x = [item["features"] for item in labeled]
         y = [int(item["label"]) for item in labeled]
-        pipeline = Pipeline(
-            [
-                ("features", DictVectorizer(sparse=False)),
-                (
-                    "model",
-                    RandomForestClassifier(
-                        n_estimators=180,
-                        max_depth=10,
-                        min_samples_leaf=2,
-                        class_weight="balanced_subsample",
-                        random_state=42,
-                    ),
-                ),
-            ]
-        )
-        metrics: dict[str, Any] = {"mode": "supervised", "class_balance": dict(Counter(y))}
         counts = Counter(y)
+        min_class = min(counts.values())
+        steps: list[tuple[str, Any]] = [
+            ("features", DictVectorizer(sparse=False)),
+            ("scale", RobustScaler()),
+        ]
+        sampler_name = "none"
+        if min_class >= 6:
+            steps.append(("sampler", SMOTE(random_state=42, k_neighbors=min(5, min_class - 1))))
+            sampler_name = "smote"
+        steps.append(
+            (
+                "model",
+                RandomForestClassifier(
+                    n_estimators=64,
+                    max_depth=9,
+                    min_samples_split=5,
+                    min_samples_leaf=6,
+                    criterion="entropy",
+                    class_weight="balanced_subsample",
+                    n_jobs=-1,
+                    random_state=42,
+                ),
+            )
+        )
+        pipeline = Pipeline(steps)
+        metrics: dict[str, Any] = {
+            "mode": "supervised",
+            "class_balance": dict(counts),
+            "imbalance_strategy": sampler_name,
+            "ported_from": "seonhak123/Credit-Card-Fraud-Detection",
+        }
         if len(y) >= 60 and min(counts.values()) >= 6:
             x_train, x_test, y_train, y_test = train_test_split(
                 x, y, test_size=0.25, random_state=42, stratify=y
@@ -447,6 +473,7 @@ class FraudModelManager:
                     "recall": round(float(recall_score(y_test, predictions, zero_division=0)), 4),
                     "f1": round(float(f1_score(y_test, predictions, zero_division=0)), 4),
                     "roc_auc": round(float(roc_auc_score(y_test, probabilities)), 4),
+                    "average_precision": round(float(average_precision_score(y_test, probabilities)), 4),
                     "validation_rows": len(y_test),
                 }
             )
@@ -514,6 +541,7 @@ class FraudModelManager:
                 "schema validation with type coercion and unseen-category logging",
                 "schema-driven derived features for timestamp, age, balance deltas, and geo distance",
                 "class-balanced supervised model when labels are available",
+                "AUPRC-oriented validation with robust scaling and optional SMOTE imbalance handling",
                 "isolation fallback for sparse or unlabeled streams",
                 "high-confidence pseudo labels are explicitly marked in training logs",
                 "agent actions are separated behind a local MCP-style connector",

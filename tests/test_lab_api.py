@@ -31,8 +31,6 @@ def test_lab_core_flow(tmp_path, monkeypatch):
             "/api/transactions",
             json={
                 "source": "test",
-                "label": 1,
-                "label_source": "pytest",
                 "payload": {
                     "trans_date_trans_time": "2020-06-21 03:14:25",
                     "cc_num": "4767265376804500",
@@ -61,6 +59,12 @@ def test_lab_core_flow(tmp_path, monkeypatch):
         assert response.status_code == 200
         body = response.json()
         assert body["transaction"]["risk_label"] in {"review", "blocked"}
+        assert body["transaction"]["label"] is None
+        assert "is_fraud" not in body["transaction"]["payload"]
+
+        simulated = client.post("/api/simulate", json={"count": 3, "fraud_rate": 0.5})
+        assert simulated.status_code == 200
+        assert all(item["label"] is None for item in simulated.json()["created"])
 
         tools = client.get("/api/mcp/tools")
         assert tools.status_code == 200
@@ -76,6 +80,7 @@ def test_lab_core_flow(tmp_path, monkeypatch):
         bot_status = client.get("/api/bot/status")
         assert bot_status.status_code == 200
         assert bot_status.json()["batch_size"] == 1
+        assert bot_status.json()["label_policy"] == "unlabeled_stream"
 
         bot_stop = client.post("/api/bot/stop")
         assert bot_stop.status_code == 200

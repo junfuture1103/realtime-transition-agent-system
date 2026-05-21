@@ -8,8 +8,6 @@ from pydantic import BaseModel, Field
 class TransactionCreate(BaseModel):
     payload: dict[str, Any]
     source: str = Field(default="manual", max_length=64)
-    label: int | bool | None = None
-    label_source: str | None = None
 
 
 class TransactionLabel(BaseModel):

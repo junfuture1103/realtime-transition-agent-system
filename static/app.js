@@ -72,7 +72,7 @@ function escapeHtml(value) {
 function renderSchemaExample() {
   const schema = state.schema;
   const example = {};
-  schema.fields.forEach((field) => {
+  schema.fields.filter((field) => field.role !== "target").forEach((field) => {
     example[field.name] = field.default ?? sampleValueFor(field);
   });
   const features = schema.fields.filter((field) => field.role === "feature" && field.train !== false);
@@ -91,6 +91,7 @@ function renderSchemaExample() {
       <div class="meta">target=${schema.target}</div>
       <div class="meta">${source.name || "Kaggle fraud transaction dataset"} 형식을 기본값으로 적용했습니다.</div>
       <div class="meta">컬럼/타깃/임계값은 configs/schemas/kaggle_fraud_transactions.json에서 교체됩니다.</div>
+      <div class="meta">거래 생성자는 정답 라벨을 넣지 않습니다. ${schema.target}은 방어자 피드백/검증 데이터에서만 붙습니다.</div>
       <h3>학습 피처</h3>
       <div class="feature-list">${chips}</div>
       <div class="meta">학습 제외/식별/라벨: ${nonTrainingNames}</div>
@@ -124,7 +125,7 @@ async function refreshAll() {
   renderHealth(health);
   renderTransactions(transactions.items);
   renderBotStatus(bot);
-  renderBotTransactions(transactions.items.filter((tx) => tx.source === "realtime_bot").slice(0, 30));
+  renderBotTransactions(transactions.items.filter((tx) => tx.source === "world_bot").slice(0, 30));
   renderUpdates(updates.items);
   renderTrainingLogs(logs.items);
   renderRedBlueLogs(redBlue.items);
@@ -166,16 +167,6 @@ function renderForm() {
     const max = field.max !== undefined ? `max="${field.max}"` : "";
     return `<div class="field">${label}<input id="${id}" type="${inputType}" step="${step}" ${min} ${max} value="${field.default ?? ""}" data-field="${field.name}" data-type="${field.type}" /></div>`;
   });
-  controls.push(`
-    <div class="field">
-      <label for="labelField">training_label</label>
-      <select id="labelField">
-        <option value="">unlabeled</option>
-        <option value="0">normal</option>
-        <option value="1">fraud</option>
-      </select>
-    </div>
-  `);
   $("#transactionForm").innerHTML = controls.join("");
 }
 
@@ -354,7 +345,8 @@ function renderBotStatus(bot) {
   $("#botStatus").innerHTML = `
     <article class="item">
       <div class="item-head"><span>${bot.running ? "running" : "stopped"}</span><span>${bot.running ? riskPill("normal") : riskPill("review")}</span></div>
-      <div class="meta">interval=${bot.interval_seconds}s · batch=${bot.batch_size} · fraud_rate=${bot.fraud_rate}</div>
+      <div class="meta">interval=${bot.interval_seconds}s · batch=${bot.batch_size} · suspicious_rate=${bot.fraud_rate}</div>
+      <div class="meta">label_policy=${bot.label_policy || "unlabeled_stream"}</div>
       <div class="meta">generated=${bot.generated} · last_tick=${formatTime(bot.last_tick_at)}</div>
       <div class="meta">last_tx=${bot.last_transaction_id || "-"}</div>
       <div class="meta">${bot.last_error ? `error=${bot.last_error}` : "error=none"}</div>
@@ -402,21 +394,18 @@ function bindEvents() {
       method: "POST",
       body: JSON.stringify({ count: 20, fraud_rate: 0.18 }),
     });
-    toast("시뮬레이션 거래가 생성됐습니다.");
+    toast("라벨 없는 실생활 거래 스트림이 생성됐습니다.");
     refreshAll();
   });
   $("#submitTransactionBtn").addEventListener("click", async () => {
-    const labelValue = $("#labelField").value;
     await fetchJson("/api/transactions", {
       method: "POST",
       body: JSON.stringify({
         payload: collectPayload(),
         source: "manual_ui",
-        label: labelValue === "" ? null : Number(labelValue),
-        label_source: labelValue === "" ? null : "manual_ui",
       }),
     });
-    toast("거래가 생성됐습니다.");
+    toast("라벨 없는 거래가 생성됐습니다.");
     refreshAll();
   });
   $("#startBotBtn").addEventListener("click", startBot);
@@ -442,7 +431,7 @@ async function startBot() {
       fraud_rate: Number($("#botFraudRateInput").value),
     }),
   });
-  toast("실시간 거래 봇이 시작됐습니다.");
+  toast("라벨 없는 실시간 거래 봇이 시작됐습니다.");
   refreshAll();
 }
 

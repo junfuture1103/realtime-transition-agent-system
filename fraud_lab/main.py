@@ -38,6 +38,7 @@ class RealtimeTransactionBot:
         self.interval_seconds = 2.0
         self.batch_size = 1
         self.fraud_rate = 0.12
+        self.label_policy = "unlabeled_stream"
         self.generated = 0
         self.started_at: str | None = None
         self.last_tick_at: str | None = None
@@ -74,6 +75,7 @@ class RealtimeTransactionBot:
             "interval_seconds": self.interval_seconds,
             "batch_size": self.batch_size,
             "fraud_rate": self.fraud_rate,
+            "label_policy": self.label_policy,
             "generated": self.generated,
             "started_at": self.started_at,
             "last_tick_at": self.last_tick_at,
@@ -89,14 +91,14 @@ class RealtimeTransactionBot:
                     for item in generate_batch(self.batch_size, self.fraud_rate):
                         transaction, _action = _process_transaction(
                             payload=item["payload"],
-                            source="realtime_bot",
-                            label=item["label"],
-                            label_source="bot_ground_truth",
+                            source="world_bot",
+                            label=None,
+                            label_source=None,
                             auto_log_training=True,
                         )
                         self.generated += 1
                         self.last_transaction_id = transaction["id"]
-                    _maybe_retrain(reason="realtime_bot_stream")
+                    _maybe_retrain(reason="world_bot_unlabeled_stream")
                     self.last_error = None
                 except Exception as exc:  # noqa: BLE001 - exposed in bot status for lab debugging.
                     self.last_error = str(exc)
@@ -178,8 +180,8 @@ def create_transaction(request: TransactionCreate) -> dict[str, Any]:
     transaction, action = _process_transaction(
         payload=request.payload,
         source=request.source,
-        label=request.label,
-        label_source=request.label_source,
+        label=None,
+        label_source=None,
     )
     _maybe_retrain()
     return {"transaction": transaction, "action": action}
@@ -231,8 +233,8 @@ def simulate(request: SimulationRequest) -> dict[str, Any]:
         transaction, action = _process_transaction(
             payload=item["payload"],
             source="simulator",
-            label=item["label"],
-            label_source=item["label_source"],
+            label=None,
+            label_source=None,
             auto_log_training=True,
         )
         created.append(transaction)
@@ -346,8 +348,9 @@ def _process_transaction(
     apply_policy: bool = True,
     auto_log_training: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    extracted_label = model_manager.schema.extract_label(payload, label)
+    extracted_label = int(bool(label)) if label is not None else None
     normalized, score = model_manager.score(payload)
+    normalized.pop(model_manager.schema.target, None)
     account_id = model_manager.schema.account_id(normalized)
     transaction = {
         "id": str(uuid.uuid4()),
