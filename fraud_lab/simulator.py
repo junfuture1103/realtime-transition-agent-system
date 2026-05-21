@@ -61,11 +61,12 @@ CITIES = [
 CUSTOMER_PROFILES = []
 
 
-def _build_customer_profiles() -> list[dict[str, Any]]:
-    rng = random.Random(20260519)
+def build_customer_profiles(size: int = 80, seed: int = 20260519) -> list[dict[str, Any]]:
+    rng = random.Random(seed)
     profiles = []
-    for index in range(80):
+    for index in range(max(1, size)):
         city, state, zip_code, lat, long, city_pop = rng.choice(CITIES)
+        normal_categories = rng.sample(CATEGORIES, k=rng.randint(4, 7))
         profiles.append(
             {
                 "cc_num": str(4_000_000_000_000_000 + index * 10_000_000_000 + rng.randint(100_000, 999_999)),
@@ -79,7 +80,11 @@ def _build_customer_profiles() -> list[dict[str, Any]]:
                 "job": rng.choice(JOBS),
                 "dob": _random_dob(rng),
                 "balance_mean": rng.uniform(900, 12000),
-                "normal_categories": rng.sample(CATEGORIES, k=rng.randint(4, 7)),
+                "normal_categories": normal_categories,
+                "preferred_merchants": rng.sample(MERCHANTS, k=rng.randint(2, min(4, len(MERCHANTS)))),
+                "frequency_weight": rng.choices([1, 2, 3, 5, 8, 13], weights=[42, 24, 16, 10, 6, 2], k=1)[0],
+                "online_bias": rng.random(),
+                "night_owl": rng.random() < 0.16,
             }
         )
     return profiles
@@ -90,13 +95,26 @@ def generate_transaction(rng: random.Random, fraud: bool | None = None) -> tuple
         fraud = rng.random() < 0.08
 
     profile = rng.choice(CUSTOMER_PROFILES)
+    base_time = datetime(2020, 6, 21, 0, 0, 0) + timedelta(minutes=rng.randint(0, 525_600))
+    return generate_transaction_for_profile(rng, profile, base_time, fraud=fraud, preserve_time=False)
+
+
+def generate_transaction_for_profile(
+    rng: random.Random,
+    profile: dict[str, Any],
+    trans_time: datetime,
+    fraud: bool | None = None,
+    preserve_time: bool = True,
+) -> tuple[dict[str, Any], int]:
+    if fraud is None:
+        fraud = rng.random() < 0.08
+
     city = profile["city"]
     state = profile["state"]
     zip_code = profile["zip"]
     lat = float(profile["lat"])
     long = float(profile["long"])
     city_pop = profile["city_pop"]
-    base_time = datetime(2020, 6, 21, 0, 0, 0) + timedelta(minutes=rng.randint(0, 525_600))
     if fraud:
         attack_style = rng.choices(
             ["card_not_present", "geo_jump", "low_and_slow", "merchant_mimicry"],
@@ -131,7 +149,8 @@ def generate_transaction(rng: random.Random, fraud: bool | None = None) -> tuple
             amount = max(55.0, min(amount, 3200.0))
             hour = rng.choice([0, 1, 2, 3, 4, 23, rng.randint(8, 22)])
             distance = rng.uniform(80, 1100)
-        trans_time = base_time.replace(hour=hour, minute=rng.randint(0, 59), second=rng.randint(0, 59))
+        if not preserve_time:
+            trans_time = trans_time.replace(hour=hour, minute=rng.randint(0, 59), second=rng.randint(0, 59))
     else:
         unusual_but_legit = rng.random() < 0.09
         category = rng.choice(RISKY_CATEGORIES + ["shopping_pos"]) if unusual_but_legit else rng.choice(profile["normal_categories"])
@@ -146,7 +165,8 @@ def generate_transaction(rng: random.Random, fraud: bool | None = None) -> tuple
             amount = max(1.0, min(amount, 720.0))
             hour = rng.randint(7, 22)
             distance = rng.uniform(1, 170)
-        trans_time = base_time.replace(hour=hour, minute=rng.randint(0, 59), second=rng.randint(0, 59))
+        if not preserve_time:
+            trans_time = trans_time.replace(hour=hour, minute=rng.randint(0, 59), second=rng.randint(0, 59))
 
     merch_lat, merch_long = _offset_location(lat, long, distance, rng)
     old_balance = round(max(50, rng.gauss(float(profile["balance_mean"]), float(profile["balance_mean"]) * 0.25)), 2)
@@ -156,7 +176,7 @@ def generate_transaction(rng: random.Random, fraud: bool | None = None) -> tuple
     payload = {
         "trans_date_trans_time": trans_time.strftime("%Y-%m-%d %H:%M:%S"),
         "cc_num": cc_num,
-        "merchant": rng.choice(MERCHANTS),
+        "merchant": rng.choice(profile.get("preferred_merchants") or MERCHANTS),
         "category": category,
         "amt": amount,
         "gender": profile["gender"],
@@ -231,4 +251,4 @@ def _random_dob(rng: random.Random) -> str:
     return f"{year:04d}-{month:02d}-{day:02d}"
 
 
-CUSTOMER_PROFILES = _build_customer_profiles()
+CUSTOMER_PROFILES = build_customer_profiles()

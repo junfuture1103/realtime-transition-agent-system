@@ -1,0 +1,24 @@
+services:
+  app:
+    build: .
+    image: realtime-transition-agent-system:latest
+    container_name: realtime-transition-agent-system-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18000:8000"
+    environment:
+      FRAUD_LAB_DB_PATH: /app/data/fraud_lab.sqlite3
+      FRAUD_LAB_SCHEMA_PATH: /app/configs/schemas/kaggle_fraud_transactions.json
+      FRAUD_LAB_MODEL_DIR: /app/data/models
+      FRAUD_LAB_ADMIN_PASSWORD: ${FRAUD_LAB_ADMIN_PASSWORD:-}
+      FRAUD_LAB_STREAM_DATASET_MANIFEST: ${FRAUD_LAB_STREAM_DATASET_MANIFEST:-/app/data/generated/realtime_financial_transactions_3000/manifest.json}
+      FRAUD_LAB_BOT_AUTO_START: ${FRAUD_LAB_BOT_AUTO_START:-true}
+      FRAUD_LAB_BOT_LOOP_DATASET: ${FRAUD_LAB_BOT_LOOP_DATASET:-true}
+      FRAUD_LAB_BOT_INTERVAL_SECONDS: ${FRAUD_LAB_BOT_INTERVAL_SECONDS:-1}
+      FRAUD_LAB_BOT_BATCH_SIZE: ${FRAUD_LAB_BOT_BATCH_SIZE:-1}
+      FRAUD_LAB_BOT_REPLAY_SPEED: ${FRAUD_LAB_BOT_REPLAY_SPEED:-3600}
+    volumes:
+      - fraud_lab_data:/app/data
+
+volumes:
+  fraud_lab_data:

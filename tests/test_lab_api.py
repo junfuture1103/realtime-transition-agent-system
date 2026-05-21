@@ -8,6 +8,13 @@ from fastapi.testclient import TestClient
 def build_client(tmp_path, monkeypatch):
     monkeypatch.setenv("FRAUD_LAB_DB_PATH", str(tmp_path / "fraud_lab.sqlite3"))
     monkeypatch.setenv("FRAUD_LAB_MODEL_DIR", str(tmp_path / "models"))
+    monkeypatch.delenv("FRAUD_LAB_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("FRAUD_LAB_STREAM_DATASET_MANIFEST", raising=False)
+    monkeypatch.delenv("FRAUD_LAB_BOT_AUTO_START", raising=False)
+    monkeypatch.delenv("FRAUD_LAB_BOT_LOOP_DATASET", raising=False)
+    monkeypatch.delenv("FRAUD_LAB_BOT_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("FRAUD_LAB_BOT_BATCH_SIZE", raising=False)
+    monkeypatch.delenv("FRAUD_LAB_BOT_REPLAY_SPEED", raising=False)
 
     import fraud_lab.config as config
 
@@ -72,7 +79,7 @@ def test_lab_core_flow(tmp_path, monkeypatch):
 
         bot = client.post(
             "/api/bot/start",
-            json={"interval_seconds": 10, "batch_size": 1, "fraud_rate": 0.2},
+            json={"interval_seconds": 10, "batch_size": 1, "fraud_rate": 0.2, "stream_mode": "synthetic"},
         )
         assert bot.status_code == 200
         assert bot.json()["running"] is True
@@ -85,6 +92,11 @@ def test_lab_core_flow(tmp_path, monkeypatch):
         bot_stop = client.post("/api/bot/stop")
         assert bot_stop.status_code == 200
         assert bot_stop.json()["running"] is False
+
+        csv_export = client.get("/api/realtime-transactions.csv?limit=5")
+        assert csv_export.status_code == 200
+        assert csv_export.headers["content-type"].startswith("text/csv")
+        assert "created_at,transaction_id,account_id" in csv_export.text
 
         mcp = client.post(
             "/mcp",

@@ -8,6 +8,7 @@ import random
 import sys
 import time
 from collections import Counter
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -37,7 +38,11 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from fraud_lab.modeling import FeatureSchema, utc_now  # noqa: E402
-from fraud_lab.simulator import generate_transaction  # noqa: E402
+from fraud_lab.simulator import (  # noqa: E402
+    build_customer_profiles,
+    generate_transaction,
+    generate_transaction_for_profile,
+)
 
 
 RF_PORTED_PARAMS = {
@@ -169,6 +174,65 @@ def open_shard(path: Path, compress: bool) -> TextIO:
     return path.open("w", newline="", encoding="utf-8")
 
 
+def parse_start_at(value: str) -> datetime:
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            pass
+    return datetime.fromisoformat(value)
+
+
+def demand_multiplier(moment: datetime) -> float:
+    hour = moment.hour + moment.minute / 60
+    weekday = moment.weekday()
+    weekend = weekday >= 5
+    if 0 <= hour < 5:
+        base = 0.18 if not weekend else 0.26
+    elif 5 <= hour < 8:
+        base = 0.55
+    elif 8 <= hour < 11:
+        base = 1.05
+    elif 11 <= hour < 14:
+        base = 1.45
+    elif 14 <= hour < 17:
+        base = 1.1
+    elif 17 <= hour < 22:
+        base = 1.65 if not weekend else 1.85
+    else:
+        base = 0.78 if not weekend else 1.05
+    if moment.month in {11, 12}:
+        base *= 1.18
+    if moment.day in {1, 15, 25, 28}:
+        base *= 1.08
+    return max(base, 0.05)
+
+
+def fraud_multiplier(moment: datetime) -> float:
+    multiplier = 1.0
+    if moment.hour in {0, 1, 2, 3, 4, 23}:
+        multiplier *= 1.65
+    if moment.weekday() >= 5:
+        multiplier *= 1.16
+    if moment.month in {11, 12}:
+        multiplier *= 1.12
+    return multiplier
+
+
+def weighted_profile_pool(profile_count: int, seed: int) -> list[dict[str, Any]]:
+    profiles = build_customer_profiles(size=profile_count, seed=seed)
+    pool: list[dict[str, Any]] = []
+    for profile in profiles:
+        pool.extend([profile] * int(profile.get("frequency_weight", 1)))
+    return pool or profiles
+
+
+def realistic_gap_seconds(rng: random.Random, moment: datetime, average_gap_seconds: float) -> float:
+    demand = demand_multiplier(moment)
+    mean_gap = max(0.05, average_gap_seconds / demand)
+    return min(mean_gap * 8, rng.expovariate(1 / mean_gap))
+
+
 def stream_synthetic_dataset(
     *,
     rows: int,
@@ -179,6 +243,9 @@ def stream_synthetic_dataset(
     shard_rows: int,
     compress: bool,
     progress_every: int,
+    profile_count: int,
+    start_at: datetime,
+    days: int,
 ) -> dict[str, Any]:
     rng = random.Random(seed)
     rows = max(1, rows)
@@ -188,6 +255,9 @@ def stream_synthetic_dataset(
     columns = dataset_columns(schema)
     suffix = ".csv.gz" if compress else ".csv"
     started = time.time()
+    current_time = start_at
+    average_gap_seconds = max(0.05, (max(1, days) * 86_400) / rows)
+    profiles = weighted_profile_pool(profile_count=profile_count, seed=seed + 17)
     class_balance = Counter()
     shard_paths: list[str] = []
     current_file: TextIO | None = None
@@ -209,10 +279,24 @@ def stream_synthetic_dataset(
                 writer.writerow(columns)
 
             remaining_rows = rows - index
-            fraud = rng.random() < (remaining_fraud / remaining_rows) if remaining_rows else False
+            current_time += timedelta(seconds=realistic_gap_seconds(rng, current_time, average_gap_seconds))
+            if remaining_fraud >= remaining_rows:
+                fraud = True
+            elif remaining_fraud <= 0:
+                fraud = False
+            else:
+                contextual_rate = remaining_fraud / remaining_rows
+                fraud = rng.random() < min(0.96, contextual_rate * fraud_multiplier(current_time))
             if fraud:
                 remaining_fraud -= 1
-            payload, label = generate_transaction(rng, fraud=fraud)
+            profile = rng.choice(profiles)
+            payload, label = generate_transaction_for_profile(
+                rng,
+                profile,
+                current_time,
+                fraud=fraud,
+                preserve_time=True,
+            )
             class_balance[label] += 1
             assert writer is not None
             writer.writerow([payload.get(column, label if column == schema.target else "") for column in columns])
@@ -247,6 +331,11 @@ def stream_synthetic_dataset(
         "class_balance": {str(key): int(value) for key, value in sorted(class_balance.items())},
         "fraud_rate": fraud_rate,
         "seed": seed,
+        "mode": "chronological_realtime_replay",
+        "profile_count": profile_count,
+        "start_at": start_at.isoformat(),
+        "end_at": current_time.isoformat(),
+        "target_days": days,
         "shard_rows": shard_rows,
         "compression": "gzip" if compress else "none",
         "columns": columns,
@@ -499,6 +588,23 @@ def parse_args() -> argparse.Namespace:
         help="Progress log interval for streaming generation.",
     )
     parser.add_argument(
+        "--profile-count",
+        type=int,
+        default=50_000,
+        help="Number of synthetic customer profiles used by chronological shard generation.",
+    )
+    parser.add_argument(
+        "--start-at",
+        default="2025-01-01 00:00:00",
+        help="Start timestamp for chronological shard generation.",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=180,
+        help="Approximate number of real-world days covered by chronological shard generation.",
+    )
+    parser.add_argument(
         "--schema",
         type=Path,
         default=ROOT_DIR / "configs" / "schemas" / "kaggle_fraud_transactions.json",
@@ -527,6 +633,9 @@ def main() -> None:
             shard_rows=args.shard_rows,
             compress=not args.no_compress,
             progress_every=args.progress_every,
+            profile_count=args.profile_count,
+            start_at=parse_start_at(args.start_at),
+            days=args.days,
         )
         print(
             json.dumps(

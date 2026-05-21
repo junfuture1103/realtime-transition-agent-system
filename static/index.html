@@ -9,8 +9,8 @@
   <body>
     <header class="shell topbar">
       <div>
-        <p class="eyebrow">AI Attack / Defense Education</p>
-        <h1>Realtime Fraud Agent Lab</h1>
+        <p class="eyebrow">Fraud Detection Model Evaluation</p>
+        <h1>Realtime Fraud Defense Lab</h1>
       </div>
       <div class="model-chip" id="modelChip">loading</div>
     </header>
@@ -19,7 +19,7 @@
       <section class="panel nav-panel">
         <button class="tab active" data-tab="live">거래</button>
         <button class="tab" data-tab="create">생성</button>
-        <button class="tab" data-tab="bot">봇</button>
+        <button class="tab" data-tab="bot">관리자</button>
         <button class="tab" data-tab="training">학습</button>
         <button class="tab" data-tab="intel">공방</button>
         <button class="tab" data-tab="mcp">MCP</button>
@@ -34,6 +34,32 @@
             <div class="toolbar">
               <button id="refreshBtn">새로고침</button>
               <button id="simulateBtn">실생활 스트림 20건</button>
+            </div>
+          </div>
+          <div class="chart-grid">
+            <div class="chart-card stream-card">
+              <div class="chart-head">
+                <div>
+                  <h3>실시간 유입</h3>
+                  <div class="chart-subtitle">최근 3분 초당 거래량</div>
+                </div>
+                <div class="live-chip" id="streamPulse">0/s</div>
+              </div>
+              <div class="chart-kpis" id="streamKpis"></div>
+              <canvas id="streamChart" height="240"></canvas>
+              <div class="chart-legend" id="streamLegend"></div>
+            </div>
+            <div class="chart-card label-card">
+              <div class="chart-head">
+                <div>
+                  <h3>정답 라벨 비교</h3>
+                  <div class="chart-subtitle">관리자가 공개한 실제 라벨과 모델 판단</div>
+                </div>
+                <div class="live-chip muted" id="labelRevealChip">pending</div>
+              </div>
+              <div class="chart-kpis" id="labelKpis"></div>
+              <canvas id="labelChart" height="240"></canvas>
+              <div class="chart-legend" id="labelLegend"></div>
             </div>
           </div>
           <div class="table-wrap">
@@ -65,23 +91,42 @@
 
         <section class="view" id="view-bot">
           <div class="section-head">
-            <h2>실시간 거래 봇</h2>
-            <div class="toolbar">
+            <h2>관리자 제어</h2>
+            <div class="toolbar hidden" id="botToolbar">
               <button id="startBotBtn">시작</button>
               <button id="stopBotBtn">정지</button>
             </div>
           </div>
+          <div class="panel inset bot-lock" id="botLock">
+            <h3>관리자 확인</h3>
+            <div class="toolbar">
+              <input id="botAdminPasswordInput" type="password" autocomplete="current-password" placeholder="admin_password" />
+              <button id="botUnlockBtn">열기</button>
+            </div>
+          </div>
+          <div class="bot-admin hidden" id="botAdminContent">
           <div class="bot-grid">
             <div class="panel inset bot-card">
               <h3>봇 설정</h3>
               <div class="form-grid bot-form">
                 <div class="field">
                   <label for="botIntervalInput">interval_seconds</label>
-                  <input id="botIntervalInput" type="number" min="0.25" max="60" step="0.25" value="2" />
+                  <input id="botIntervalInput" type="number" min="1" max="60" step="1" value="1" />
                 </div>
                 <div class="field">
                   <label for="botBatchInput">batch_size</label>
                   <input id="botBatchInput" type="number" min="1" max="25" step="1" value="1" />
+                </div>
+                <div class="field">
+                  <label for="botModeInput">stream_mode</label>
+                  <select id="botModeInput">
+                    <option value="dataset" selected>dataset</option>
+                    <option value="synthetic">synthetic</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="botReplaySpeedInput">replay_speed</label>
+                  <input id="botReplaySpeedInput" type="number" min="1" max="86400" step="60" value="3600" />
                 </div>
                 <div class="field">
                   <label for="botFraudRateInput">suspicious_rate</label>
@@ -92,6 +137,39 @@
             <div class="panel inset bot-card">
               <h3>봇 상태</h3>
               <div id="botStatus" class="stack compact"></div>
+            </div>
+          </div>
+          <div class="admin-grid">
+            <div class="panel inset admin-card">
+              <h3>정답 라벨 공개</h3>
+              <div id="labelRevealStatus" class="stack compact"></div>
+              <div class="toolbar admin-toolbar">
+                <input id="labelRevealLimitInput" type="number" min="1" max="3000" step="100" value="3000" />
+                <label class="checkline" for="labelRevealRetrainInput">
+                  <input id="labelRevealRetrainInput" type="checkbox" />
+                  공개 후 재학습
+                </label>
+                <button id="labelRevealBtn">이전 데이터 라벨 공개</button>
+              </div>
+            </div>
+            <div class="panel inset admin-card">
+              <h3>모델 업데이트 업로드</h3>
+              <div class="meta">현재 스키마와 호환되는 joblib artifact를 업로드하면 즉시 새 모델 버전으로 전환됩니다.</div>
+              <div class="form-grid upload-form">
+                <div class="field">
+                  <label for="modelUploadInput">artifact</label>
+                  <input id="modelUploadInput" type="file" accept=".joblib,.pkl" />
+                </div>
+                <div class="field">
+                  <label for="modelUploadNotesInput">notes</label>
+                  <input id="modelUploadNotesInput" type="text" value="manual_model_upload" />
+                </div>
+                <div class="field action-field">
+                  <label>&nbsp;</label>
+                  <button id="modelUploadBtn">모델 업로드</button>
+                </div>
+              </div>
+              <div id="modelUploadStatus" class="meta"></div>
             </div>
           </div>
           <div class="panel inset red-blue-log">
@@ -110,6 +188,7 @@
                 <tbody id="botTransactionRows"></tbody>
               </table>
             </div>
+          </div>
           </div>
         </section>
 

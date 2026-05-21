@@ -59,7 +59,15 @@ pytest
 
 ## 실생활 거래 봇
 
-`world_bot`은 고정된 카드 고객 프로필 80개를 기반으로 반복 거래를 생성합니다. 고객별 도시, 직업, 생년월일, 잔액 성향, 선호 카테고리를 유지하고, 카테고리별 금액 분포와 고객-상점 거리 분포를 다르게 둬서 실생활 거래 스트림에 가깝게 만들었습니다. `suspicious_rate`는 라벨이 아니라 의심스러운 거래 패턴이 섞이는 비율입니다.
+`world_bot`은 기본적으로 오프라인 synthetic CSV shard를 시간순으로 읽어서 운영 거래처럼 조금씩 공개합니다. 배포 환경에서는 `FRAUD_LAB_BOT_AUTO_START=true`, `FRAUD_LAB_BOT_INTERVAL_SECONDS=1`, `FRAUD_LAB_BOT_BATCH_SIZE=1`로 서버 시작 시 자동 실행되고 초당 1건씩 공개합니다. `FRAUD_LAB_BOT_LOOP_DATASET=true`이면 공개용 3,000건 replay dataset을 끝까지 읽은 뒤 다시 처음부터 순환합니다. CSV에는 `is_fraud` 라벨이 있지만, 봇은 이 값을 버리고 payload만 `label = null` 운영 거래로 저장합니다. 봇 시작/정지는 `FRAUD_LAB_ADMIN_PASSWORD`로 보호됩니다.
+
+CSV가 없을 때 테스트용으로 `stream_mode = synthetic`을 쓰면 즉석 생성 모드로 동작합니다. 이때 `suspicious_rate`는 라벨이 아니라 의심스러운 거래 패턴이 섞이는 비율입니다.
+
+UI 상단에는 거래 발생 수, 이상거래 탐지율, 정답 공개 수, 모델 일치율, 공격 성공률을 표시합니다. 공격 성공률은 공개된 실제 사기 거래 중 모델이 정상으로 놓친 비율입니다.
+
+UI의 거래 탭에는 최근 초 단위 유입량 그래프와 라벨 공개 비교 그래프가 있습니다. 비교 그래프는 dataset replay의 숨겨진 `is_fraud`를 별도 truth table에 보관하고, 관리자가 공개한 row만 모델 예측과 집계 비교합니다. 정답 라벨 공개는 관리자 탭의 `이전 데이터 라벨 공개` 버튼으로만 수행됩니다.
+
+관리자 탭에서는 현재 스키마와 호환되는 joblib 모델 artifact를 업로드해 즉시 새 모델 버전으로 전환할 수 있습니다. 업로드 artifact는 `{pipeline, metadata, schema}` 구조를 권장하며, `model/transaction_fraud_model.py`가 생성하는 artifact와 호환됩니다.
 
 ## 포팅한 모델 학습
 
@@ -87,13 +95,21 @@ python model/transaction_fraud_model.py \
 ```bash
 python model/transaction_fraud_model.py \
   --generate-only \
-  --rows 100000000 \
-  --fraud-rate 0.08 \
-  --shard-rows 1000000 \
-  --progress-every 1000000
+  --rows 3000 \
+  --fraud-rate 0.018 \
+  --shard-rows 3000 \
+  --shard-dir data/generated/realtime_financial_transactions_3000 \
+  --profile-count 3000 \
+  --start-at "2025-01-01 00:00:00" \
+  --days 7 \
+  --progress-every 1000
 ```
 
-기본 출력은 `data/generated/synthetic_financial_transactions_100000000/part-*.csv.gz`와 `manifest.json`입니다.
+기본 출력은 `part-*.csv.gz`와 `manifest.json`입니다. manifest 경로를 `FRAUD_LAB_STREAM_DATASET_MANIFEST`에 넣으면 봇이 해당 shard를 replay합니다.
+
+현재 배포 앱은 3,000건짜리 replay dataset만 사용합니다. 1,000만 건 전체 dataset은 호스트 로컬 `data/generated/realtime_financial_transactions_10000000/`에만 보관하며, 컨테이너 volume이나 공개 CSV API에 연결하지 않습니다.
+
+현재 도메인 배포는 `https://caulab.hacktheworldtest.xyz`에서 Nginx가 Docker 컨테이너의 `127.0.0.1:18000`으로 프록시합니다.
 
 ## 공격/방어 로그
 
@@ -108,8 +124,11 @@ python model/transaction_fraud_model.py \
 - `POST /api/transactions`: 거래 생성 및 모델 판정
 - `POST /api/transactions/{id}/label`: 수동 라벨 피드백
 - `GET /api/bot/status`: 실시간 거래 봇 상태
-- `POST /api/bot/start`: 실시간 거래 봇 시작
-- `POST /api/bot/stop`: 실시간 거래 봇 정지
+- `POST /api/bot/start`: 실시간 거래 봇 시작, `admin_password` 필요
+- `POST /api/bot/stop`: 실시간 거래 봇 정지, `admin_password` 필요
+- `POST /api/admin/labels/reveal`: 관리자 전용. 숨겨진 정답 라벨을 이전 거래에 공개
+- `POST /api/admin/model/upload`: 관리자 전용. 호환 모델 artifact 업로드 및 모델 버전 전환
+- `GET /api/realtime-transactions.csv`: 최신 실시간 거래와 모델 판단 결과를 CSV로 export. 공개된 라벨만 `revealed_label`에 표시하며, export는 최대 3,000건으로 제한합니다.
 - `POST /api/simulate`: 거래 스트림 일괄 생성
 - `POST /api/admin/retrain`: 즉시 재학습
 - `GET /api/model/updates`: 모델 업데이트 로그

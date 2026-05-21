@@ -21,13 +21,36 @@ class SimulationRequest(BaseModel):
 
 
 class BotStartRequest(BaseModel):
-    interval_seconds: float = Field(default=2.0, ge=0.25, le=60)
+    interval_seconds: float = Field(default=1.0, ge=1, le=60)
     batch_size: int = Field(default=1, ge=1, le=25)
     fraud_rate: float = Field(default=0.12, ge=0, le=1)
+    stream_mode: Literal["dataset", "synthetic"] = "dataset"
+    replay_speed: float = Field(
+        default=3600.0,
+        ge=1,
+        le=86400,
+        description="Dataset seconds replayed per real second when stream_mode=dataset.",
+    )
+    admin_password: str | None = Field(default=None, max_length=256)
+
+
+class BotStopRequest(BaseModel):
+    admin_password: str | None = Field(default=None, max_length=256)
+
+
+class AdminLoginRequest(BaseModel):
+    admin_password: str = Field(max_length=256)
+
+
+class TruthRevealRequest(BaseModel):
+    limit: int = Field(default=3000, ge=1, le=3000)
+    retrain_after: bool = False
+    admin_password: str | None = Field(default=None, max_length=256)
 
 
 class RetrainRequest(BaseModel):
     reason: str = "manual_retrain"
+    admin_password: str | None = Field(default=None, max_length=256)
 
 
 class MCPToolCall(BaseModel):

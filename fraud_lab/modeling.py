@@ -307,6 +307,73 @@ class FraudModelManager:
         self.schema = FeatureSchema(artifact.get("schema", self.schema.raw))
         return True
 
+    def import_artifact(self, artifact_path: str | Path, version: int, reason: str) -> dict[str, Any]:
+        path = Path(artifact_path)
+        artifact = joblib.load(path)
+        if not isinstance(artifact, dict) or "pipeline" not in artifact:
+            raise ValueError("uploaded artifact must be a joblib dict with a pipeline")
+
+        uploaded_schema = FeatureSchema(artifact.get("schema", self.schema.raw))
+        if uploaded_schema.schema_id != self.schema.schema_id:
+            raise ValueError(
+                f"schema mismatch: expected {self.schema.schema_id}, got {uploaded_schema.schema_id}"
+            )
+
+        pipeline = artifact["pipeline"]
+        sample_features = self.schema.feature_dict({})
+        if hasattr(pipeline, "predict_proba"):
+            pipeline.predict_proba([sample_features])
+        elif hasattr(pipeline, "decision_function"):
+            pipeline.decision_function([sample_features])
+        else:
+            pipeline.predict([sample_features])
+
+        uploaded_metadata = dict(artifact.get("metadata", {}))
+        raw_metrics = uploaded_metadata.get("metrics") or {}
+        metrics = dict(raw_metrics) if isinstance(raw_metrics, dict) else {}
+        feature_importance = uploaded_metadata.get("feature_importance") or self._feature_importance(pipeline)
+        model_kind = str(uploaded_metadata.get("model_kind", "uploaded_model"))
+        metadata = uploaded_metadata | {
+            "version": int(version),
+            "schema_id": self.schema.schema_id,
+            "created_at": utc_now(),
+            "model_kind": model_kind,
+            "metrics": metrics,
+            "feature_importance": feature_importance,
+            "reason": reason,
+            "uploaded_from": str(path),
+        }
+        final_path = self.model_dir / f"fraud_model_v{version}_uploaded.joblib"
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump({"pipeline": pipeline, "metadata": metadata, "schema": self.schema.raw}, final_path)
+
+        self.pipeline = pipeline
+        self.metadata = metadata
+        class_balance = metrics.get("class_balance") if isinstance(metrics, dict) else None
+        labeled_rows = (
+            sum(int(value) for value in class_balance.values())
+            if isinstance(class_balance, dict)
+            else int(metrics.get("sample_rows") or metrics.get("training_rows") or 0)
+        )
+        robustness = self._robustness_report(
+            model_kind=model_kind,
+            feature_importance=feature_importance,
+            pseudo_labeled_rows=0,
+        )
+        robustness["uploaded_model"] = True
+        return {
+            "version": int(version),
+            "created_at": metadata["created_at"],
+            "schema_id": self.schema.schema_id,
+            "training_rows": int(metrics.get("training_rows") or metrics.get("sample_rows") or labeled_rows or 0),
+            "labeled_rows": int(labeled_rows or 0),
+            "metrics": metrics,
+            "robustness": robustness,
+            "artifact_path": str(final_path),
+            "notes": reason,
+            "used_transaction_ids": [],
+        }
+
     def score(self, payload: dict[str, Any]) -> tuple[dict[str, Any], ScoreResult]:
         normalized, warnings = self.schema.normalize_payload(payload)
         features = self.schema.feature_dict(normalized)

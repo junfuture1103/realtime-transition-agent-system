@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -134,10 +135,29 @@ class Repository:
 
                 CREATE INDEX IF NOT EXISTS idx_red_blue_events_created_at
                     ON red_blue_events(created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS dataset_truth_labels (
+                    transaction_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    schema_id TEXT,
+                    dataset_time TEXT NOT NULL,
+                    true_label INTEGER NOT NULL,
+                    predicted_label INTEGER,
+                    risk_label TEXT NOT NULL,
+                    anomaly_score REAL,
+                    source TEXT NOT NULL,
+                    revealed_at TEXT,
+                    reveal_batch_id TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_dataset_truth_dataset_time
+                    ON dataset_truth_labels(dataset_time);
                 """
             )
             self._ensure_column(conn, "transactions", "schema_id", "TEXT")
             self._ensure_column(conn, "training_events", "schema_id", "TEXT")
+            self._ensure_column(conn, "dataset_truth_labels", "revealed_at", "TEXT")
+            self._ensure_column(conn, "dataset_truth_labels", "reveal_batch_id", "TEXT")
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_transactions_schema_created_at
@@ -569,6 +589,221 @@ class Repository:
             for row in rows
         ]
 
+    def log_dataset_truth_label(self, record: dict[str, Any]) -> None:
+        if record.get("true_label") is None:
+            return
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO dataset_truth_labels (
+                    transaction_id, created_at, schema_id, dataset_time, true_label,
+                    predicted_label, risk_label, anomaly_score, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["transaction_id"],
+                    record["created_at"],
+                    record.get("schema_id"),
+                    record["dataset_time"],
+                    int(record["true_label"]),
+                    record.get("predicted_label"),
+                    record["risk_label"],
+                    record.get("anomaly_score"),
+                    record.get("source", "world_bot"),
+                ),
+            )
+
+    def max_dataset_truth_time(self, schema_id: str | None = None) -> str | None:
+        with self.connect() as conn:
+            if schema_id:
+                row = conn.execute(
+                    """
+                    SELECT MAX(dataset_time) FROM dataset_truth_labels
+                    WHERE schema_id = ?
+                    """,
+                    (schema_id,),
+                ).fetchone()
+            else:
+                row = conn.execute("SELECT MAX(dataset_time) FROM dataset_truth_labels").fetchone()
+        return row[0] if row and row[0] else None
+
+    def max_revealed_dataset_truth_time(self, schema_id: str | None = None) -> str | None:
+        with self.connect() as conn:
+            if schema_id:
+                row = conn.execute(
+                    """
+                    SELECT MAX(dataset_time) FROM dataset_truth_labels
+                    WHERE schema_id = ? AND revealed_at IS NOT NULL
+                    """,
+                    (schema_id,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT MAX(dataset_time) FROM dataset_truth_labels
+                    WHERE revealed_at IS NOT NULL
+                    """
+                ).fetchone()
+        return row[0] if row and row[0] else None
+
+    def reveal_dataset_truth_labels(
+        self,
+        limit: int,
+        schema_id: str | None = None,
+    ) -> dict[str, Any]:
+        limit = max(1, min(limit, 3000))
+        revealed_at = utc_now()
+        reveal_batch_id = str(uuid.uuid4())
+        with self.connect() as conn:
+            params: list[Any] = []
+            schema_clause = ""
+            if schema_id:
+                schema_clause = "AND schema_id = ?"
+                params.append(schema_id)
+            params.append(limit)
+            rows = conn.execute(
+                f"""
+                SELECT transaction_id, true_label, dataset_time, predicted_label
+                FROM dataset_truth_labels
+                WHERE revealed_at IS NULL {schema_clause}
+                ORDER BY dataset_time ASC, created_at ASC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    """
+                    UPDATE transactions
+                    SET label = ?, label_source = ?, training_status = 'queued'
+                    WHERE id = ?
+                    """,
+                    (int(row["true_label"]), "admin_truth_reveal", row["transaction_id"]),
+                )
+                conn.execute(
+                    """
+                    UPDATE dataset_truth_labels
+                    SET revealed_at = ?, reveal_batch_id = ?
+                    WHERE transaction_id = ?
+                    """,
+                    (revealed_at, reveal_batch_id, row["transaction_id"]),
+                )
+        return {
+            "revealed": len(rows),
+            "revealed_at": revealed_at,
+            "reveal_batch_id": reveal_batch_id,
+            "latest_dataset_time": rows[-1]["dataset_time"] if rows else None,
+        }
+
+    def truth_label_summary(self, schema_id: str | None = None) -> dict[str, Any]:
+        with self.connect() as conn:
+            schema_clause = "WHERE schema_id = ?" if schema_id else ""
+            params = (schema_id,) if schema_id else ()
+            row = conn.execute(
+                f"""
+                SELECT
+                    COUNT(*) AS total_truth,
+                    SUM(CASE WHEN revealed_at IS NOT NULL THEN 1 ELSE 0 END) AS revealed,
+                    SUM(CASE WHEN revealed_at IS NULL THEN 1 ELSE 0 END) AS unrevealed,
+                    MAX(dataset_time) AS latest_dataset_time,
+                    MAX(CASE WHEN revealed_at IS NOT NULL THEN dataset_time ELSE NULL END) AS latest_revealed_dataset_time
+                FROM dataset_truth_labels
+                {schema_clause}
+                """,
+                params,
+            ).fetchone()
+        return {
+            "total_truth": int(row["total_truth"] or 0),
+            "revealed": int(row["revealed"] or 0),
+            "unrevealed": int(row["unrevealed"] or 0),
+            "latest_dataset_time": row["latest_dataset_time"],
+            "latest_revealed_dataset_time": row["latest_revealed_dataset_time"],
+        }
+
+    def label_comparison_windows(
+        self,
+        reveal_before: str,
+        limit: int = 12,
+        bucket_seconds: int = 10_800,
+        schema_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(limit, 48))
+        bucket_seconds = max(60, bucket_seconds)
+        with self.connect() as conn:
+            params: list[Any] = [bucket_seconds, bucket_seconds, reveal_before]
+            schema_clause = ""
+            if schema_id:
+                schema_clause = "AND schema_id = ?"
+                params.append(schema_id)
+            params.append(limit)
+            rows = conn.execute(
+                f"""
+                SELECT
+                    ((CAST(strftime('%s', dataset_time) AS INTEGER) / ?) * ?) AS bucket_epoch,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN true_label = 1 THEN 1 ELSE 0 END) AS actual_fraud,
+                    SUM(CASE WHEN true_label = 0 THEN 1 ELSE 0 END) AS actual_normal,
+                    SUM(CASE WHEN COALESCE(predicted_label, 0) = 1 THEN 1 ELSE 0 END) AS predicted_fraud,
+                    SUM(CASE WHEN true_label = 1 AND COALESCE(predicted_label, 0) = 1 THEN 1 ELSE 0 END) AS tp,
+                    SUM(CASE WHEN true_label = 0 AND COALESCE(predicted_label, 0) = 1 THEN 1 ELSE 0 END) AS fp,
+                    SUM(CASE WHEN true_label = 1 AND COALESCE(predicted_label, 0) = 0 THEN 1 ELSE 0 END) AS fn,
+                    SUM(CASE WHEN true_label = 0 AND COALESCE(predicted_label, 0) = 0 THEN 1 ELSE 0 END) AS tn
+                FROM dataset_truth_labels
+                WHERE dataset_time <= ? AND revealed_at IS NOT NULL {schema_clause}
+                GROUP BY bucket_epoch
+                ORDER BY bucket_epoch DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        result = []
+        for row in reversed(rows):
+            epoch = int(row["bucket_epoch"])
+            result.append(
+                {
+                    "bucket_start": datetime.fromtimestamp(epoch, timezone.utc).isoformat(),
+                    "bucket_end": datetime.fromtimestamp(epoch + bucket_seconds, timezone.utc).isoformat(),
+                    "total": int(row["total"] or 0),
+                    "actual_fraud": int(row["actual_fraud"] or 0),
+                    "actual_normal": int(row["actual_normal"] or 0),
+                    "predicted_fraud": int(row["predicted_fraud"] or 0),
+                    "tp": int(row["tp"] or 0),
+                    "fp": int(row["fp"] or 0),
+                    "fn": int(row["fn"] or 0),
+                    "tn": int(row["tn"] or 0),
+                }
+            )
+        return result
+
+    def recent_stream_rows(
+        self,
+        cutoff: str,
+        schema_id: str | None = None,
+        source: str = "world_bot",
+    ) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            if schema_id:
+                rows = conn.execute(
+                    """
+                    SELECT created_at, risk_label, anomaly_score
+                    FROM transactions
+                    WHERE created_at >= ? AND schema_id = ? AND source = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (cutoff, schema_id, source),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT created_at, risk_label, anomaly_score
+                    FROM transactions
+                    WHERE created_at >= ? AND source = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (cutoff, source),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
     def stats(self, schema_id: str | None = None) -> dict[str, Any]:
         with self.connect() as conn:
             if schema_id:
@@ -607,17 +842,57 @@ class Repository:
                 labeled = conn.execute(
                     "SELECT COUNT(*) FROM transactions WHERE label IS NOT NULL"
                 ).fetchone()[0]
+            detected = int(review or 0) + int(blocked or 0)
+            truth_params: list[Any] = []
+            truth_schema_clause = ""
+            if schema_id:
+                truth_schema_clause = "AND schema_id = ?"
+                truth_params.append(schema_id)
+            truth = conn.execute(
+                f"""
+                SELECT
+                    COUNT(*) AS revealed,
+                    SUM(CASE WHEN true_label = 1 THEN 1 ELSE 0 END) AS actual_fraud,
+                    SUM(CASE WHEN COALESCE(predicted_label, 0) = 1 THEN 1 ELSE 0 END) AS predicted_fraud,
+                    SUM(CASE WHEN true_label = 1 AND COALESCE(predicted_label, 0) = 1 THEN 1 ELSE 0 END) AS tp,
+                    SUM(CASE WHEN true_label = 0 AND COALESCE(predicted_label, 0) = 1 THEN 1 ELSE 0 END) AS fp,
+                    SUM(CASE WHEN true_label = 1 AND COALESCE(predicted_label, 0) = 0 THEN 1 ELSE 0 END) AS fn,
+                    SUM(CASE WHEN true_label = 0 AND COALESCE(predicted_label, 0) = 0 THEN 1 ELSE 0 END) AS tn
+                FROM dataset_truth_labels
+                WHERE revealed_at IS NOT NULL {truth_schema_clause}
+                """,
+                truth_params,
+            ).fetchone()
             accounts = conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
             suspended = conn.execute(
                 "SELECT COUNT(*) FROM accounts WHERE status = 'suspended'"
             ).fetchone()[0]
+        revealed = int(truth["revealed"] or 0)
+        actual_fraud = int(truth["actual_fraud"] or 0)
+        predicted_fraud = int(truth["predicted_fraud"] or 0)
+        tp = int(truth["tp"] or 0)
+        fp = int(truth["fp"] or 0)
+        fn = int(truth["fn"] or 0)
+        tn = int(truth["tn"] or 0)
         return {
             "transactions": total,
             "review": review,
             "blocked": blocked,
+            "detected": detected,
+            "detection_rate": round(detected / max(1, int(total or 0)), 4),
             "labeled": labeled,
             "accounts": accounts,
             "suspended_accounts": suspended,
+            "revealed_truth": revealed,
+            "actual_fraud": actual_fraud,
+            "predicted_fraud": predicted_fraud,
+            "true_positives": tp,
+            "false_positives": fp,
+            "false_negatives": fn,
+            "true_negatives": tn,
+            "model_accuracy": round((tp + tn) / max(1, revealed), 4),
+            "fraud_recall": round(tp / max(1, actual_fraud), 4),
+            "attack_success_rate": round(fn / max(1, actual_fraud), 4),
         }
 
     def _transaction_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
